@@ -30,12 +30,13 @@ def main():
 
     img_size: Tuple[int, int] = (args.img_size[0], args.img_size[1])
 
-    print(f"Loading model from {args.model_path}")
-   model = tf.keras.models.load_model(
+print(f"Loading model from {args.model_path}")
+
+model = tf.keras.models.load_model(
     args.model_path,
+    compile=False,
     safe_mode=False
-        custom_objects={"loss": binary_focal_loss(), "binary_focal_loss": binary_focal_loss()},
-    )
+)
 
     test_ds, test_count = build_tf_dataset(
         csv_path=args.test_csv,
