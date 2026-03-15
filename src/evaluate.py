@@ -1,6 +1,7 @@
+```python
 import argparse
-import pandas as pd
 import tensorflow as tf
+from tensorflow.keras.applications.efficientnet import preprocess_input
 
 from src.dataset import build_tf_dataset
 
@@ -26,10 +27,11 @@ def main():
     model = tf.keras.models.load_model(
         args.model_path,
         compile=False,
-        safe_mode=False
+        safe_mode=False,
+        custom_objects={"preprocess_input": preprocess_input}
     )
 
-    print("Loading test dataset...")
+    print("Building test dataset...")
 
     test_ds, test_count = build_tf_dataset(
         csv_path=args.test_csv,
@@ -40,7 +42,7 @@ def main():
         training=False
     )
 
-    print(f"Test samples: {test_count}")
+    print(f"Total test samples: {test_count}")
 
     results = model.evaluate(test_ds)
 
@@ -51,3 +53,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+```
