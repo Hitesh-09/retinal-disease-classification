@@ -34,7 +34,6 @@ def main():
    model = tf.keras.models.load_model(
     args.model_path,
     safe_mode=False
-)
         custom_objects={"loss": binary_focal_loss(), "binary_focal_loss": binary_focal_loss()},
     )
 
