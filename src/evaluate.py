@@ -1,4 +1,3 @@
-```python
 import argparse
 import tensorflow as tf
 from tensorflow.keras.applications.efficientnet import preprocess_input
