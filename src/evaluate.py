@@ -32,14 +32,13 @@ def main():
 
     print("Building test dataset...")
 
-    test_ds, test_count = build_tf_dataset(
-        csv_path=args.test_csv,
-        image_root=args.image_root,
-        image_column=args.image_column,
-        img_size=tuple(args.img_size),
-        batch_size=args.batch_size,
-        training=False
-    )
+test_ds, test_count = build_tf_dataset(
+    csv_path=args.test_csv,
+    image_root=args.image_root,
+    image_column=args.image_column,
+    img_size=tuple(args.img_size),
+    batch_size=args.batch_size
+)
 
     print(f"Total test samples: {test_count}")
 
