@@ -1,3 +1,4 @@
+```python
 import argparse
 import tensorflow as tf
 from tensorflow.keras.applications.efficientnet import preprocess_input
@@ -27,18 +28,18 @@ def main():
         args.model_path,
         compile=False,
         safe_mode=False,
-        custom_objects={"preprocess_input": preprocess_input}
+        custom_objects={"preprocess_input": preprocess_input},
     )
 
     print("Building test dataset...")
 
-test_ds, test_count = build_tf_dataset(
-    csv_path=args.test_csv,
-    image_root=args.image_root,
-    image_column=args.image_column,
-    img_size=tuple(args.img_size),
-    batch_size=args.batch_size
-)
+    test_ds, test_count = build_tf_dataset(
+        csv_path=args.test_csv,
+        image_root=args.image_root,
+        image_column=args.image_column,
+        img_size=tuple(args.img_size),
+        batch_size=args.batch_size,
+    )
 
     print(f"Total test samples: {test_count}")
 
@@ -51,3 +52,4 @@ test_ds, test_count = build_tf_dataset(
 
 if __name__ == "__main__":
     main()
+```
