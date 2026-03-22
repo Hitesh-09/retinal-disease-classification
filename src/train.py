@@ -35,6 +35,21 @@ def get_metrics(num_classes: int):
     ]
 
 
+def get_weighted_bce(pos_weights):
+    pos_weights = tf.constant(pos_weights, dtype=tf.float32)
+
+    def weighted_bce(y_true, y_pred):
+        # ensure numerical stability
+        y_pred = tf.clip_by_value(y_pred, 1e-7, 1 - 1e-7)
+
+        loss = -(pos_weights * y_true * tf.math.log(y_pred) +
+                 (1 - y_true) * tf.math.log(1 - y_pred))
+
+        return tf.reduce_mean(loss)
+
+    return weighted_bce
+
+
 def main():
     args = parse_args()
 
@@ -72,13 +87,14 @@ def main():
         train_base=args.train_base,
     )
 
-    loss_fn = binary_focal_loss(gamma=2.0, alpha=0.25)
+    pos_weights = [1.9570, 2.0435, 15.9470, 15.5092, 19.0628, 31.8971, 20.6135, 3.0673]
+    loss_fn = get_weighted_bce(pos_weights)
     optimizer = tf.keras.optimizers.Adam(learning_rate=args.learning_rate)
 
     model.compile(
         optimizer=optimizer,
         loss=loss_fn,
-        metrics=get_metrics(num_classes=num_classes),
+        metrics=["AUC"],
     )
 
     checkpoint_path = os.path.join(
