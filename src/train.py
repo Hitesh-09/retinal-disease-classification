@@ -97,6 +97,8 @@ def main():
         metrics=["AUC"],
     )
 
+    print(model.loss)
+
     checkpoint_path = os.path.join(
         args.model_dir, "odir_efficientnet_b4.{epoch:02d}-{val_auc_macro:.4f}.keras"
     )
