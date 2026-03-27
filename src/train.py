@@ -5,21 +5,21 @@ from typing import Tuple
 import tensorflow as tf
 
 from .dataset import build_tf_dataset
-from .model import build_efficientnet_b4_classifier, binary_focal_loss
+from .model import build_efficientnet_b4_classifier, build_densenet_classifier, binary_focal_loss
 from .preprocess import CLASS_NAMES
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Train EfficientNet multi-label classifier on ODIR."
+        description="Train EfficientNet and DenseNet multi-label classifiers on ODIR."
     )
     parser.add_argument("--train_csv", type=str, required=True)
     parser.add_argument("--val_csv", type=str, required=True)
     parser.add_argument("--image_root", type=str, required=True)
-    parser.add_argument("--image_column", type=str, default="Image")
+    parser.add_argument("--image_column", type=str, default="filename")
     parser.add_argument("--img_size", type=int, nargs=2, default=[224, 224])
-    parser.add_argument("--batch_size", type=int, default=16)
-    parser.add_argument("--epochs", type=int, default=30)
+    parser.add_argument("--batch_size", type=int, default=8)
+    parser.add_argument("--epochs", type=int, default=1)  # Changed to 1 for quick training
     parser.add_argument("--learning_rate", type=float, default=1e-4)
     parser.add_argument("--model_dir", type=str, default="models")
     parser.add_argument("--train_base", action="store_true")
@@ -38,7 +38,7 @@ def get_metrics(num_classes: int):
 def get_weighted_bce(pos_weights):
     pos_weights = tf.constant(pos_weights, dtype=tf.float32)
 
-    def weighted_bce(y_true, y_pred):
+    def weighted_loss(y_true, y_pred):
         # ensure numerical stability
         y_pred = tf.clip_by_value(y_pred, 1e-7, 1 - 1e-7)
 
@@ -47,7 +47,7 @@ def get_weighted_bce(pos_weights):
 
         return tf.reduce_mean(loss)
 
-    return weighted_bce
+    return weighted_loss
 
 
 def main():
@@ -81,26 +81,28 @@ def main():
     steps_per_epoch = max(train_count // args.batch_size, 1)
     val_steps = max(val_count // args.batch_size, 1)
 
+    pos_weights = [1.9570, 2.0435, 15.9470, 15.5092, 19.0628, 31.8971, 20.6135, 3.0673]
+    loss_fn = get_weighted_bce(pos_weights)
+
+    # Train EfficientNet
+    print("Training EfficientNet...")
     model = build_efficientnet_b4_classifier(
         input_shape=(img_size[0], img_size[1], 3),
         num_classes=num_classes,
         train_base=args.train_base,
     )
+    model_name = "efficientnet_b4"
 
-    pos_weights = [1.9570, 2.0435, 15.9470, 15.5092, 19.0628, 31.8971, 20.6135, 3.0673]
-    loss_fn = get_weighted_bce(pos_weights)
     optimizer = tf.keras.optimizers.Adam(learning_rate=args.learning_rate)
 
     model.compile(
         optimizer=optimizer,
         loss=loss_fn,
-        metrics=["AUC"],
+        metrics=get_metrics(num_classes),
     )
 
-    print(model.loss)
-
     checkpoint_path = os.path.join(
-        args.model_dir, "odir_efficientnet_b4.{epoch:02d}-{val_auc_macro:.4f}.keras"
+        args.model_dir, f"odir_{model_name}.{{epoch:02d}}-{{val_auc_macro:.4f}}.keras"
     )
     checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(
         filepath=checkpoint_path,
@@ -137,9 +139,68 @@ def main():
         callbacks=[checkpoint_cb, early_stopping_cb, reduce_lr_cb],
     )
 
-    final_model_path = os.path.join(args.model_dir, "odir_efficientnet_b4_final.keras")
+    final_model_path = os.path.join(args.model_dir, "efficientnet_b4_weighted.keras")
     model.save(final_model_path)
-    print(f"Training complete. Final model saved to {final_model_path}")
+    print(f"EfficientNet training complete. Model saved to {final_model_path}")
+
+    # Train DenseNet
+    print("Training DenseNet...")
+    model = build_densenet_classifier(
+        input_shape=(img_size[0], img_size[1], 3),
+        num_classes=num_classes,
+        train_base=args.train_base,
+    )
+    model_name = "densenet"
+
+    optimizer = tf.keras.optimizers.Adam(learning_rate=args.learning_rate)
+
+    model.compile(
+        optimizer=optimizer,
+        loss=loss_fn,
+        metrics=get_metrics(num_classes),
+    )
+
+    checkpoint_path = os.path.join(
+        args.model_dir, f"odir_{model_name}.{{epoch:02d}}-{{val_auc_macro:.4f}}.keras"
+    )
+    checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(
+        filepath=checkpoint_path,
+        monitor="val_auc_macro",
+        mode="max",
+        save_best_only=True,
+        save_weights_only=False,
+        verbose=1,
+    )
+
+    early_stopping_cb = tf.keras.callbacks.EarlyStopping(
+        monitor="val_auc_macro",
+        mode="max",
+        patience=5,
+        restore_best_weights=True,
+        verbose=1,
+    )
+
+    reduce_lr_cb = tf.keras.callbacks.ReduceLROnPlateau(
+        monitor="val_auc_macro",
+        mode="max",
+        factor=0.5,
+        patience=2,
+        verbose=1,
+        min_lr=1e-7,
+    )
+
+    model.fit(
+        train_ds,
+        validation_data=val_ds,
+        epochs=args.epochs,
+        steps_per_epoch=steps_per_epoch,
+        validation_steps=val_steps,
+        callbacks=[checkpoint_cb, early_stopping_cb, reduce_lr_cb],
+    )
+
+    final_model_path = os.path.join(args.model_dir, "densenet_best.keras")
+    model.save(final_model_path)
+    print(f"DenseNet training complete. Model saved to {final_model_path}")
 
 
 if __name__ == "__main__":

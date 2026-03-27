@@ -6,6 +6,10 @@ from tensorflow.keras.applications.efficientnet import (
     EfficientNetB4,
     preprocess_input,
 )
+from tensorflow.keras.applications.densenet import (
+    DenseNet121,
+    preprocess_input as densenet_preprocess_input,
+)
 
 from .preprocess import CLASS_NAMES
 
@@ -41,11 +45,45 @@ def build_efficientnet_b4_classifier(
     x = layers.Dropout(dropout_rate)(x)
     outputs = layers.Dense(num_classes, activation="sigmoid", name="multi_label_head")(x)
 
-    model = models.Model(inputs=inputs, outputs=outputs, name="odir_efficientnet_b4")
+    model = models.Model(inputs=inputs, outputs=outputs, name="odir_efficientnet")
+    return model
+
+def build_densenet_classifier(
+    input_shape: Tuple[int, int, int] = (224, 224, 3),
+    num_classes: int = None,
+    train_base: bool = False,
+    dropout_rate: float = 0.4,
+) -> tf.keras.Model:
+    """
+    DenseNet121-based multi-label classifier with transfer learning,
+    global average pooling, and sigmoid outputs.
+    """
+    if num_classes is None:
+        num_classes = len(CLASS_NAMES)
+
+    inputs = layers.Input(shape=input_shape)
+
+    # Model expects float32 images in [0, 1]; convert to [0, 255] then apply
+    # DenseNet-specific preprocessing.
+    x = layers.Lambda(lambda im: im * 255.0)(inputs)
+    x = layers.Lambda(densenet_preprocess_input)(x)
+
+    base_model = DenseNet121(
+        include_top=False,
+        input_tensor=x,
+        weights="imagenet",  # transfer learning from ImageNet
+    )
+    base_model.trainable = train_base
+
+    x = layers.GlobalAveragePooling2D()(base_model.output)
+    x = layers.Dropout(dropout_rate)(x)
+    outputs = layers.Dense(num_classes, activation="sigmoid", name="multi_label_head")(x)
+
+    model = models.Model(inputs=inputs, outputs=outputs, name="odir_densenet")
     return model
 
 
-def binary_focal_loss(gamma: float = 2.0, alpha: float = 0.25):
+def binary_focal_loss(alpha=0.25, gamma=2.0):
     def loss(y_true, y_pred):
         y_true = tf.cast(y_true, tf.float32)
         epsilon = tf.keras.backend.epsilon()
@@ -65,4 +103,4 @@ def binary_focal_loss(gamma: float = 2.0, alpha: float = 0.25):
     return loss
 
 
-__all__ = ["build_efficientnet_b4_classifier", "binary_focal_loss"]
+__all__ = ["build_efficientnet_b4_classifier", "build_densenet_classifier", "binary_focal_loss"]
