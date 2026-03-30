@@ -1,5 +1,5 @@
-```python
 import argparse
+
 import tensorflow as tf
 from tensorflow.keras.applications.efficientnet import preprocess_input
 
@@ -52,4 +52,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-```
