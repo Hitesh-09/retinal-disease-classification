@@ -1,28 +1,45 @@
 import argparse
-import os
 from typing import Tuple
 
 import tensorflow as tf
 
+from .config import (
+    CLASS_NAMES,
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_EPOCHS,
+    DEFAULT_IMAGE_COLUMN,
+    DEFAULT_IMAGE_SIZE,
+    DEFAULT_LEARNING_RATE,
+    DEFAULT_MODEL_KEYS,
+    DEFAULT_TRAIN_BASE,
+    DEFAULT_TRAIN_CSV,
+    DEFAULT_VAL_CSV,
+    MODELS_DIR,
+    RAW_IMAGE_DIR,
+)
 from .dataset import build_tf_dataset
-from .model import build_efficientnet_b4_classifier, build_densenet_classifier, binary_focal_loss
-from .preprocess import CLASS_NAMES
+from .inference import compute_dataset_metrics, predict_dataset
+from .losses import weighted_binary_crossentropy
+from .models import build_model
+from .utils import ensure_directory, resolve_model_path
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Train EfficientNet and DenseNet multi-label classifiers on ODIR."
+        description="Train retinal disease classifiers using the shared project architecture."
     )
-    parser.add_argument("--train_csv", type=str, required=True)
-    parser.add_argument("--val_csv", type=str, required=True)
-    parser.add_argument("--image_root", type=str, required=True)
-    parser.add_argument("--image_column", type=str, default="filename")
-    parser.add_argument("--img_size", type=int, nargs=2, default=[224, 224])
-    parser.add_argument("--batch_size", type=int, default=8)
-    parser.add_argument("--epochs", type=int, default=1)  # Changed to 1 for quick training
-    parser.add_argument("--learning_rate", type=float, default=1e-4)
-    parser.add_argument("--model_dir", type=str, default="models")
+    parser.add_argument("--train_csv", type=str, default=str(DEFAULT_TRAIN_CSV))
+    parser.add_argument("--val_csv", type=str, default=str(DEFAULT_VAL_CSV))
+    parser.add_argument("--image_root", type=str, default=str(RAW_IMAGE_DIR))
+    parser.add_argument("--image_column", type=str, default=DEFAULT_IMAGE_COLUMN)
+    parser.add_argument("--img_size", type=int, nargs=2, default=list(DEFAULT_IMAGE_SIZE))
+    parser.add_argument("--batch_size", type=int, default=DEFAULT_BATCH_SIZE)
+    parser.add_argument("--epochs", type=int, default=DEFAULT_EPOCHS)
+    parser.add_argument("--learning_rate", type=float, default=DEFAULT_LEARNING_RATE)
+    parser.add_argument("--model_dir", type=str, default=str(MODELS_DIR))
+    parser.add_argument("--model_keys", nargs="+", default=list(DEFAULT_MODEL_KEYS))
     parser.add_argument("--train_base", action="store_true")
+    parser.set_defaults(train_base=DEFAULT_TRAIN_BASE)
     return parser.parse_args()
 
 
@@ -35,26 +52,10 @@ def get_metrics(num_classes: int):
     ]
 
 
-def get_weighted_bce(pos_weights):
-    pos_weights = tf.constant(pos_weights, dtype=tf.float32)
-
-    def weighted_loss(y_true, y_pred):
-        # ensure numerical stability
-        y_pred = tf.clip_by_value(y_pred, 1e-7, 1 - 1e-7)
-
-        loss = -(pos_weights * y_true * tf.math.log(y_pred) +
-                 (1 - y_true) * tf.math.log(1 - y_pred))
-
-        return tf.reduce_mean(loss)
-
-    return weighted_loss
-
-
 def main():
     args = parse_args()
 
-    os.makedirs(args.model_dir, exist_ok=True)
-
+    ensure_directory(args.model_dir)
     img_size: Tuple[int, int] = (args.img_size[0], args.img_size[1])
     num_classes = len(CLASS_NAMES)
 
@@ -67,7 +68,6 @@ def main():
         shuffle=True,
         augment=True,
     )
-
     val_ds, val_count = build_tf_dataset(
         csv_path=args.val_csv,
         image_root=args.image_root,
@@ -78,129 +78,62 @@ def main():
         augment=False,
     )
 
-    steps_per_epoch = max(train_count // args.batch_size, 1)
-    val_steps = max(val_count // args.batch_size, 1)
+    print(f"Training samples: {train_count}")
+    print(f"Validation samples: {val_count}")
 
-    pos_weights = [1.9570, 2.0435, 15.9470, 15.5092, 19.0628, 31.8971, 20.6135, 3.0673]
-    loss_fn = get_weighted_bce(pos_weights)
+    for model_key in args.model_keys:
+        print(f"\nTraining {model_key}...")
+        model = build_model(
+            model_key=model_key,
+            input_shape=(img_size[0], img_size[1], 3),
+            num_classes=num_classes,
+            train_base=args.train_base,
+        )
+        model.compile(
+            optimizer=tf.keras.optimizers.Adam(learning_rate=args.learning_rate),
+            loss=weighted_binary_crossentropy(),
+            metrics=get_metrics(num_classes),
+        )
 
-    # Train EfficientNet
-    print("Training EfficientNet...")
-    model = build_efficientnet_b4_classifier(
-        input_shape=(img_size[0], img_size[1], 3),
-        num_classes=num_classes,
-        train_base=args.train_base,
-    )
-    model_name = "efficientnet_b4"
+        model_output_path = resolve_model_path(model_key, args.model_dir)
+        checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(
+            filepath=str(model_output_path),
+            monitor="val_auc_macro",
+            mode="max",
+            save_best_only=True,
+            save_weights_only=False,
+            verbose=1,
+        )
+        early_stopping_cb = tf.keras.callbacks.EarlyStopping(
+            monitor="val_auc_macro",
+            mode="max",
+            patience=5,
+            restore_best_weights=True,
+            verbose=1,
+        )
+        reduce_lr_cb = tf.keras.callbacks.ReduceLROnPlateau(
+            monitor="val_auc_macro",
+            mode="max",
+            factor=0.5,
+            patience=2,
+            verbose=1,
+            min_lr=1e-7,
+        )
 
-    optimizer = tf.keras.optimizers.Adam(learning_rate=args.learning_rate)
+        model.fit(
+            train_ds,
+            validation_data=val_ds,
+            epochs=args.epochs,
+            callbacks=[checkpoint_cb, early_stopping_cb, reduce_lr_cb],
+        )
 
-    model.compile(
-        optimizer=optimizer,
-        loss=loss_fn,
-        metrics=get_metrics(num_classes),
-    )
+        model.save(model_output_path)
 
-    checkpoint_path = os.path.join(
-        args.model_dir, f"odir_{model_name}.{{epoch:02d}}-{{val_auc_macro:.4f}}.keras"
-    )
-    checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(
-        filepath=checkpoint_path,
-        monitor="val_auc_macro",
-        mode="max",
-        save_best_only=True,
-        save_weights_only=False,
-        verbose=1,
-    )
-
-    early_stopping_cb = tf.keras.callbacks.EarlyStopping(
-        monitor="val_auc_macro",
-        mode="max",
-        patience=5,
-        restore_best_weights=True,
-        verbose=1,
-    )
-
-    reduce_lr_cb = tf.keras.callbacks.ReduceLROnPlateau(
-        monitor="val_auc_macro",
-        mode="max",
-        factor=0.5,
-        patience=2,
-        verbose=1,
-        min_lr=1e-7,
-    )
-
-    model.fit(
-        train_ds,
-        validation_data=val_ds,
-        epochs=args.epochs,
-        steps_per_epoch=steps_per_epoch,
-        validation_steps=val_steps,
-        callbacks=[checkpoint_cb, early_stopping_cb, reduce_lr_cb],
-    )
-
-    final_model_path = os.path.join(args.model_dir, "efficientnet_b4_weighted.keras")
-    model.save(final_model_path)
-    print(f"EfficientNet training complete. Model saved to {final_model_path}")
-
-    # Train DenseNet
-    print("Training DenseNet...")
-    model = build_densenet_classifier(
-        input_shape=(img_size[0], img_size[1], 3),
-        num_classes=num_classes,
-        train_base=args.train_base,
-    )
-    model_name = "densenet"
-
-    optimizer = tf.keras.optimizers.Adam(learning_rate=args.learning_rate)
-
-    model.compile(
-        optimizer=optimizer,
-        loss=loss_fn,
-        metrics=get_metrics(num_classes),
-    )
-
-    checkpoint_path = os.path.join(
-        args.model_dir, f"odir_{model_name}.{{epoch:02d}}-{{val_auc_macro:.4f}}.keras"
-    )
-    checkpoint_cb = tf.keras.callbacks.ModelCheckpoint(
-        filepath=checkpoint_path,
-        monitor="val_auc_macro",
-        mode="max",
-        save_best_only=True,
-        save_weights_only=False,
-        verbose=1,
-    )
-
-    early_stopping_cb = tf.keras.callbacks.EarlyStopping(
-        monitor="val_auc_macro",
-        mode="max",
-        patience=5,
-        restore_best_weights=True,
-        verbose=1,
-    )
-
-    reduce_lr_cb = tf.keras.callbacks.ReduceLROnPlateau(
-        monitor="val_auc_macro",
-        mode="max",
-        factor=0.5,
-        patience=2,
-        verbose=1,
-        min_lr=1e-7,
-    )
-
-    model.fit(
-        train_ds,
-        validation_data=val_ds,
-        epochs=args.epochs,
-        steps_per_epoch=steps_per_epoch,
-        validation_steps=val_steps,
-        callbacks=[checkpoint_cb, early_stopping_cb, reduce_lr_cb],
-    )
-
-    final_model_path = os.path.join(args.model_dir, "densenet_best.keras")
-    model.save(final_model_path)
-    print(f"DenseNet training complete. Model saved to {final_model_path}")
+        labels, probabilities = predict_dataset([model], val_ds)
+        metrics = compute_dataset_metrics(labels, probabilities)
+        print(f"{model_key} saved to {model_output_path}")
+        print(f"{model_key} validation macro AUC: {metrics['macro_auc']:.4f}")
+        print(f"{model_key} validation binary accuracy: {metrics['binary_accuracy']:.4f}")
 
 
 if __name__ == "__main__":

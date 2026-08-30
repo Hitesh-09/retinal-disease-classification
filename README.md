@@ -30,6 +30,8 @@ The goal is to detect multiple eye diseases simultaneously using deep learning m
 * Dataset: **ODIR (Ocular Disease Intelligent Recognition)**
 * Contains retinal fundus images labeled with multiple diseases
 
+![Sample Fundus Images](assets/samples.png)
+
 ### Classes:
 
 | Label | Disease                          |
@@ -42,6 +44,8 @@ The goal is to detect multiple eye diseases simultaneously using deep learning m
 | H     | Hypertension                     |
 | M     | Myopia                           |
 | O     | Other diseases                   |
+
+![Disease Distribution](assets/disease_distribution.png)
 
 ---
 
@@ -123,6 +127,11 @@ retinal-disease-classification/
 
 ## 📊 Results
 
+### Training Metrics
+
+![Training Accuracy](assets/accuracy.png)
+![Training Loss](assets/loss.png)
+
 ### Model Performance (AUC)
 
 | Model                      | AUC        |
@@ -162,6 +171,8 @@ retinal-disease-classification/
 ## 🔬 Grad-CAM Visualization
 
 Grad-CAM highlights regions in retinal images where the model focuses while making predictions, providing interpretability.
+
+![Grad-CAM Visualization](assets/gradcam.png)
 
 ---
 

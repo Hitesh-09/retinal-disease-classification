@@ -1,23 +1,27 @@
-import tensorflow as tf
-from src.model import build_efficientnet_b4_classifier, build_densenet_classifier
+from src.config import CLASS_NAMES, DEFAULT_MODEL_KEYS, MODELS_DIR
+from src.losses import weighted_binary_crossentropy
+from src.models import build_model
+from src.utils import ensure_directory, resolve_model_path
 
-# Define the weighted loss
-def weighted_loss(y_true, y_pred):
-    pos_weights = tf.constant([1.9570, 2.0435, 15.9470, 15.5092, 19.0628, 31.8971, 20.6135, 3.0673], dtype=tf.float32)
-    y_pred = tf.clip_by_value(y_pred, 1e-7, 1 - 1e-7)
-    loss = -(pos_weights * y_true * tf.math.log(y_pred) + (1 - y_true) * tf.math.log(1 - y_pred))
-    return tf.reduce_mean(loss)
 
-# Build models
-eff_model = build_efficientnet_b4_classifier()
-den_model = build_densenet_classifier()
+def main():
+    ensure_directory(MODELS_DIR)
 
-# Compile with the loss
-eff_model.compile(optimizer='adam', loss=weighted_loss, metrics=['AUC'])
-den_model.compile(optimizer='adam', loss=weighted_loss, metrics=['AUC'])
+    for model_key in DEFAULT_MODEL_KEYS:
+        model = build_model(
+            model_key=model_key,
+            input_shape=(224, 224, 3),
+            num_classes=len(CLASS_NAMES),
+        )
+        model.compile(
+            optimizer="adam",
+            loss=weighted_binary_crossentropy(),
+            metrics=["AUC"],
+        )
+        output_path = resolve_model_path(model_key, MODELS_DIR)
+        model.save(output_path)
+        print(f"Saved {model_key} scaffold to {output_path}")
 
-# Save models with the required names
-eff_model.save('models/efficientnet_b4_weighted.keras')
-den_model.save('models/densenet_best.keras')
 
-print("Models saved with correct names and loss function.")
+if __name__ == "__main__":
+    main()
